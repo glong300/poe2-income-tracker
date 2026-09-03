@@ -1,6 +1,7 @@
 use crate::{domain::CurrencyAmount, realm::Realm};
+use serde::Serialize;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct CaptureCandidate {
     pub realm_hint: Option<Realm>,
     pub entries: Vec<CurrencyAmount>,

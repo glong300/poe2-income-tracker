@@ -369,7 +369,7 @@ mod adjustment_state_tests {
 
 #[cfg(test)]
 mod capture_candidate_tests {
-    use super::{adapters::capture::CaptureCandidate, domain::CurrencyAmount, realm::Realm};
+    use super::{adapters::capture::CaptureCandidate, domain::CurrencyAmount, realm::Realm, storage::SqliteRepository};
 
     #[test]
     fn candidate_is_not_a_snapshot_until_confirmed() {
@@ -377,6 +377,18 @@ mod capture_candidate_tests {
 
         assert_eq!(candidate.entries[0].quantity, 12);
         assert_eq!(candidate.realm_hint, Some(Realm::China));
+    }
+
+    #[test]
+    fn storing_a_candidate_does_not_create_a_snapshot() {
+        let path = std::env::temp_dir().join(format!("poe2-candidate-{}.sqlite", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let repository = SqliteRepository::open(&path).unwrap();
+
+        repository.save_capture_candidate(&CaptureCandidate::new(Some(Realm::China), vec![CurrencyAmount::new("exalted", 12)], 88)).unwrap();
+
+        assert_eq!(repository.list_snapshots_in_realm(Realm::China).unwrap().len(), 0);
+        std::fs::remove_file(path).unwrap();
     }
 }
 

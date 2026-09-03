@@ -3,6 +3,7 @@ use std::path::Path;
 use rusqlite::{params, Connection, Result};
 
 use crate::domain::{AdjustmentKind, CurrencyAmount, Direction, LedgerAdjustment, Snapshot, SnapshotStatus};
+use crate::adapters::capture::CaptureCandidate;
 use crate::pricing::{effective_price, PriceSnapshot, PriceSource};
 use crate::realm::Realm;
 
@@ -51,6 +52,12 @@ impl SqliteRepository {
                 direction TEXT NOT NULL CHECK (direction IN ('inflow', 'outflow')),
                 kind TEXT NOT NULL CHECK (kind IN ('trade', 'exchange', 'crafting', 'other')),
                 occurred_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS capture_candidates (
+                id INTEGER PRIMARY KEY,
+                realm_hint TEXT,
+                entries_json TEXT NOT NULL,
+                confidence INTEGER NOT NULL CHECK (confidence >= 0 AND confidence <= 100)
             );
             ",
         )?;
@@ -194,6 +201,14 @@ impl SqliteRepository {
         self.connection.execute(
             "INSERT INTO ledger_adjustments (realm, currency_id, quantity, direction, kind, occurred_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![realm.as_str(), adjustment.currency_id, adjustment.quantity as i64, direction_name(adjustment.direction), adjustment_kind_name(adjustment.kind), adjustment.occurred_at],
+        )?;
+        Ok(())
+    }
+
+    pub fn save_capture_candidate(&self, candidate: &CaptureCandidate) -> Result<()> {
+        self.connection.execute(
+            "INSERT INTO capture_candidates (realm_hint, entries_json, confidence) VALUES (?1, ?2, ?3)",
+            params![candidate.realm_hint.map(Realm::as_str), serde_json::to_string(&candidate.entries).unwrap(), candidate.confidence],
         )?;
         Ok(())
     }
