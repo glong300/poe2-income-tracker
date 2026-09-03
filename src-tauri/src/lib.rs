@@ -2,6 +2,7 @@
 use tauri::Manager;
 
 pub mod domain;
+pub mod realm;
 pub mod storage;
 pub mod commands;
 
@@ -214,6 +215,18 @@ mod daily_ledger_command_tests {
 
         assert_eq!(ledger[0].net_change, 7);
         std::fs::remove_file(path).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod realm_tests {
+    use super::realm::Realm;
+
+    #[test]
+    fn parses_the_two_supported_realms() {
+        assert_eq!(Realm::parse("international"), Some(Realm::International));
+        assert_eq!(Realm::parse("china"), Some(Realm::China));
+        assert_eq!(Realm::parse("other"), None);
     }
 }
 
