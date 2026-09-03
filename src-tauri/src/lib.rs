@@ -383,6 +383,32 @@ mod daily_ledger_command_tests {
 }
 
 #[cfg(test)]
+mod adjustment_storage_tests {
+    use super::{
+        domain::{calculate_day, AdjustmentKind, CurrencyAmount, Direction, LedgerAdjustment, Snapshot},
+        realm::Realm,
+        storage::SqliteRepository,
+    };
+
+    #[test]
+    fn persists_realm_adjustments_for_the_daily_ledger() {
+        let path = std::env::temp_dir().join(format!("poe2-adjustments-{}.sqlite", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let repository = SqliteRepository::open(&path).unwrap();
+        repository.save_snapshot_in_realm(Realm::China, &Snapshot::valid("2026-09-03T09:00:00+08:00", vec![CurrencyAmount::new("exalted", 10)])).unwrap();
+        repository.save_snapshot_in_realm(Realm::China, &Snapshot::valid("2026-09-03T21:00:00+08:00", vec![CurrencyAmount::new("exalted", 15)])).unwrap();
+        repository.save_adjustment_in_realm(Realm::China, &LedgerAdjustment::new("2026-09-03T12:00:00+08:00", "exalted", 2, Direction::Outflow, AdjustmentKind::Crafting)).unwrap();
+
+        let rows = calculate_day(&repository.list_snapshots_in_realm(Realm::China).unwrap(), &repository.list_adjustments_in_realm(Realm::China).unwrap(), "2026-09-03").unwrap();
+
+        assert_eq!(rows[0].net_change, 5);
+        assert_eq!(rows[0].explained_change, -2);
+        assert_eq!(rows[0].unattributed_change, 7);
+        std::fs::remove_file(path).unwrap();
+    }
+}
+
+#[cfg(test)]
 mod realm_tests {
     use super::{change_realm, current_realm, realm::Realm, storage::SqliteRepository, AppState};
 

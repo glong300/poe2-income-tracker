@@ -2,7 +2,7 @@ use std::path::Path;
 
 use rusqlite::{params, Connection, Result};
 
-use crate::domain::{CurrencyAmount, Snapshot, SnapshotStatus};
+use crate::domain::{AdjustmentKind, CurrencyAmount, Direction, LedgerAdjustment, Snapshot, SnapshotStatus};
 use crate::pricing::{effective_price, PriceSnapshot, PriceSource};
 use crate::realm::Realm;
 
@@ -42,6 +42,15 @@ impl SqliteRepository {
                 source TEXT NOT NULL CHECK (source IN ('automatic', 'manual')),
                 captured_at TEXT NOT NULL,
                 confirmed INTEGER NOT NULL CHECK (confirmed IN (0, 1))
+            );
+            CREATE TABLE IF NOT EXISTS ledger_adjustments (
+                id INTEGER PRIMARY KEY,
+                realm TEXT NOT NULL CHECK (realm IN ('international', 'china')),
+                currency_id TEXT NOT NULL,
+                quantity INTEGER NOT NULL CHECK (quantity > 0),
+                direction TEXT NOT NULL CHECK (direction IN ('inflow', 'outflow')),
+                kind TEXT NOT NULL CHECK (kind IN ('trade', 'exchange', 'crafting', 'other')),
+                occurred_at TEXT NOT NULL
             );
             ",
         )?;
@@ -180,6 +189,26 @@ impl SqliteRepository {
 
         Ok(effective_price(&prices, realm, currency_id, captured_at).cloned())
     }
+
+    pub fn save_adjustment_in_realm(&self, realm: Realm, adjustment: &LedgerAdjustment) -> Result<()> {
+        self.connection.execute(
+            "INSERT INTO ledger_adjustments (realm, currency_id, quantity, direction, kind, occurred_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![realm.as_str(), adjustment.currency_id, adjustment.quantity as i64, direction_name(adjustment.direction), adjustment_kind_name(adjustment.kind), adjustment.occurred_at],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_adjustments_in_realm(&self, realm: Realm) -> Result<Vec<LedgerAdjustment>> {
+        let mut statement = self.connection.prepare(
+            "SELECT occurred_at, currency_id, quantity, direction, kind FROM ledger_adjustments WHERE realm = ?1 ORDER BY occurred_at ASC, id ASC",
+        )?;
+        let adjustments = statement.query_map(params![realm.as_str()], |row| {
+            let direction = match row.get::<_, String>(3)?.as_str() { "inflow" => Direction::Inflow, "outflow" => Direction::Outflow, _ => unreachable!() };
+            let kind = match row.get::<_, String>(4)?.as_str() { "trade" => AdjustmentKind::Trade, "exchange" => AdjustmentKind::Exchange, "crafting" => AdjustmentKind::Crafting, "other" => AdjustmentKind::Other, _ => unreachable!() };
+            Ok(LedgerAdjustment::new(row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, u64>(2)?, direction, kind))
+        })?.collect::<Result<Vec<_>>>()?;
+        Ok(adjustments)
+    }
 }
 
 fn migrate_snapshots_realm(connection: &Connection) -> Result<()> {
@@ -216,3 +245,6 @@ fn price_source_name(source: PriceSource) -> &'static str {
         PriceSource::Manual => "manual",
     }
 }
+
+fn direction_name(direction: Direction) -> &'static str { match direction { Direction::Inflow => "inflow", Direction::Outflow => "outflow" } }
+fn adjustment_kind_name(kind: AdjustmentKind) -> &'static str { match kind { AdjustmentKind::Trade => "trade", AdjustmentKind::Exchange => "exchange", AdjustmentKind::Crafting => "crafting", AdjustmentKind::Other => "other" } }
