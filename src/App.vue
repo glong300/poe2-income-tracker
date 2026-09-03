@@ -8,7 +8,7 @@ import { getDailyLedger, getPriceProviderStatus, getRealm, saveSnapshot, setReal
 const savedEntryCount = ref<number | null>(null);
 const saveError = ref("");
 const ledgerRows = ref<DailyLedgerRow[]>([]);
-const realm = ref<Realm>("international");
+const realm = ref<Realm>("china");
 const providerStatus = ref<ProviderStatus | null>(null);
 const isChangingRealm = ref(false);
 const netChange = computed(() => ledgerRows.value.reduce((total, row) => total + row.net_change, 0));

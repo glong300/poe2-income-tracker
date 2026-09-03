@@ -27,8 +27,8 @@ describe("App", () => {
   it("persists a realm change from the dashboard", async () => {
     const wrapper = mount(App);
 
-    await wrapper.get('button[value="china"]').trigger("click");
+    await wrapper.get('button[value="international"]').trigger("click");
 
-    expect(setRealm).toHaveBeenCalledWith("china");
+    expect(setRealm).toHaveBeenCalledWith("international");
   });
 });

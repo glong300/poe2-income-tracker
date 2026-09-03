@@ -32,7 +32,7 @@ impl SqliteRepository {
                 id INTEGER PRIMARY KEY CHECK (id = 1),
                 realm TEXT NOT NULL CHECK (realm IN ('international', 'china'))
             );
-            INSERT OR IGNORE INTO profile (id, realm) VALUES (1, 'international');
+            INSERT OR IGNORE INTO profile (id, realm) VALUES (1, 'china');
             CREATE TABLE IF NOT EXISTS price_snapshots (
                 id INTEGER PRIMARY KEY,
                 realm TEXT NOT NULL CHECK (realm IN ('international', 'china')),

@@ -322,7 +322,7 @@ mod app_state_tests {
         let _ = std::fs::remove_file(&path);
         let state = AppState::open(&path).unwrap();
 
-        assert_eq!(state.realm().unwrap(), Realm::International);
+        assert_eq!(state.realm().unwrap(), Realm::China);
         state.set_realm(Realm::China).unwrap();
         assert_eq!(state.realm().unwrap(), Realm::China);
 
@@ -398,7 +398,7 @@ mod realm_tests {
         let path = std::env::temp_dir().join(format!("poe2-realm-{}.sqlite", std::process::id()));
         let _ = std::fs::remove_file(&path);
         let repository = SqliteRepository::open(&path).unwrap();
-        assert_eq!(repository.realm().unwrap(), Realm::International);
+        assert_eq!(repository.realm().unwrap(), Realm::China);
         repository.set_realm(Realm::China).unwrap();
         drop(repository);
 
