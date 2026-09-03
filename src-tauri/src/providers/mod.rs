@@ -41,7 +41,10 @@ pub fn provider_status(realm: Realm) -> ProviderStatus {
 
 #[cfg(test)]
 mod tests {
-    use super::{cn_market::CNMarketProvider, poe_ninja::PoeNinjaProvider, provider_status, ProviderAvailability, ProviderId};
+    use super::{
+        cn_market::CNMarketProvider, poe_ninja::PoeNinjaProvider, provider_status,
+        ProviderAvailability, ProviderId,
+    };
     use crate::realm::Realm;
 
     #[test]

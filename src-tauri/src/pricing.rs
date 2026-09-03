@@ -100,6 +100,7 @@ mod tests {
     use super::{effective_price, parse_manual_price_csv, PriceSnapshot, PriceSource};
     use crate::realm::Realm;
     use crate::storage::SqliteRepository;
+    use crate::AppState;
 
     #[test]
     fn prefers_a_confirmed_manual_price_over_an_automatic_price_at_the_same_time() {
@@ -197,5 +198,31 @@ mod tests {
         );
 
         assert_eq!(result.unwrap_err(), "第 2 行价格必须为正整数");
+    }
+
+    #[test]
+    fn imports_csv_prices_into_the_current_realm_ledger() {
+        let path =
+            std::env::temp_dir().join(format!("poe2-price-import-{}.sqlite", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let state = AppState::open(&path).unwrap();
+        let captured_at = "2026-09-03T12:00:00+08:00";
+
+        state
+            .import_manual_prices(&format!(
+                "currency_id,value,quoted_in,captured_at\nexalted,12,chaos,{captured_at}\n"
+            ))
+            .unwrap();
+
+        let repository = SqliteRepository::open(&path).unwrap();
+        assert_eq!(
+            repository
+                .effective_price(Realm::China, "exalted", captured_at)
+                .unwrap()
+                .unwrap()
+                .value,
+            12
+        );
+        std::fs::remove_file(path).unwrap();
     }
 }

@@ -2,8 +2,10 @@ use std::path::Path;
 
 use rusqlite::{params, Connection, Result};
 
-use crate::domain::{AdjustmentKind, CurrencyAmount, Direction, LedgerAdjustment, Snapshot, SnapshotStatus};
 use crate::adapters::capture::{CaptureCandidate, StoredCaptureCandidate};
+use crate::domain::{
+    AdjustmentKind, CurrencyAmount, Direction, LedgerAdjustment, Snapshot, SnapshotStatus,
+};
 use crate::pricing::{effective_price, PriceSnapshot, PriceSource};
 use crate::realm::Realm;
 
@@ -183,7 +185,8 @@ impl SqliteRepository {
                     _ => unreachable!("database source constraint prevents unknown sources"),
                 };
                 Ok(PriceSnapshot::new(
-                    Realm::parse(&row.get::<_, String>(0)?).expect("database realm constraint prevents unknown realms"),
+                    Realm::parse(&row.get::<_, String>(0)?)
+                        .expect("database realm constraint prevents unknown realms"),
                     row.get::<_, String>(1)?,
                     row.get::<_, u64>(2)?,
                     row.get::<_, String>(3)?,
@@ -197,7 +200,11 @@ impl SqliteRepository {
         Ok(effective_price(&prices, realm, currency_id, captured_at).cloned())
     }
 
-    pub fn save_adjustment_in_realm(&self, realm: Realm, adjustment: &LedgerAdjustment) -> Result<()> {
+    pub fn save_adjustment_in_realm(
+        &self,
+        realm: Realm,
+        adjustment: &LedgerAdjustment,
+    ) -> Result<()> {
         self.connection.execute(
             "INSERT INTO ledger_adjustments (realm, currency_id, quantity, direction, kind, occurred_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![realm.as_str(), adjustment.currency_id, adjustment.quantity as i64, direction_name(adjustment.direction), adjustment_kind_name(adjustment.kind), adjustment.occurred_at],
@@ -215,31 +222,97 @@ impl SqliteRepository {
 
     pub fn list_capture_candidates(&self) -> Result<Vec<StoredCaptureCandidate>> {
         let mut statement = self.connection.prepare("SELECT id, realm_hint, entries_json, confidence FROM capture_candidates ORDER BY id ASC")?;
-        let rows = statement.query_map([], |row| {
-            let realm_hint = row.get::<_, Option<String>>(1)?.and_then(|value| Realm::parse(&value));
-            let entries = serde_json::from_str(&row.get::<_, String>(2)?).unwrap_or_default();
-            Ok(StoredCaptureCandidate { id: row.get(0)?, candidate: CaptureCandidate::new(realm_hint, entries, row.get(3)?) })
-        })?.collect::<Result<Vec<_>>>()?;
+        let rows = statement
+            .query_map([], |row| {
+                let realm_hint = row
+                    .get::<_, Option<String>>(1)?
+                    .and_then(|value| Realm::parse(&value));
+                let entries = serde_json::from_str(&row.get::<_, String>(2)?).unwrap_or_default();
+                Ok(StoredCaptureCandidate {
+                    id: row.get(0)?,
+                    candidate: CaptureCandidate::new(realm_hint, entries, row.get(3)?),
+                })
+            })?
+            .collect::<Result<Vec<_>>>()?;
         Ok(rows)
     }
 
-    pub fn confirm_capture_candidate(&self, id: i64, realm: Realm, captured_at: &str) -> Result<bool> {
-        let candidate = self.list_capture_candidates()?.into_iter().find(|candidate| candidate.id == id);
-        let Some(candidate) = candidate else { return Ok(false); };
-        self.save_snapshot_in_realm(realm, &Snapshot::valid(captured_at, candidate.candidate.entries))?;
-        self.connection.execute("DELETE FROM capture_candidates WHERE id = ?1", params![id])?;
+    pub fn confirm_capture_candidate(
+        &self,
+        id: i64,
+        realm: Realm,
+        captured_at: &str,
+    ) -> Result<bool> {
+        let candidate = self
+            .list_capture_candidates()?
+            .into_iter()
+            .find(|candidate| candidate.id == id);
+        let Some(candidate) = candidate else {
+            return Ok(false);
+        };
+        self.confirm_capture_candidate_with_entries(
+            id,
+            realm,
+            captured_at,
+            candidate.candidate.entries,
+        )
+    }
+
+    pub fn confirm_capture_candidate_with_entries(
+        &self,
+        id: i64,
+        realm: Realm,
+        captured_at: &str,
+        entries: Vec<CurrencyAmount>,
+    ) -> Result<bool> {
+        let exists = self.connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM capture_candidates WHERE id = ?1)",
+            params![id],
+            |row| row.get::<_, bool>(0),
+        )?;
+        if !exists {
+            return Ok(false);
+        }
+        self.save_snapshot_in_realm(realm, &Snapshot::valid(captured_at, entries))?;
+        self.connection
+            .execute("DELETE FROM capture_candidates WHERE id = ?1", params![id])?;
         Ok(true)
+    }
+
+    pub fn delete_capture_candidate(&self, id: i64) -> Result<bool> {
+        Ok(self
+            .connection
+            .execute("DELETE FROM capture_candidates WHERE id = ?1", params![id])?
+            > 0)
     }
 
     pub fn list_adjustments_in_realm(&self, realm: Realm) -> Result<Vec<LedgerAdjustment>> {
         let mut statement = self.connection.prepare(
             "SELECT occurred_at, currency_id, quantity, direction, kind FROM ledger_adjustments WHERE realm = ?1 ORDER BY occurred_at ASC, id ASC",
         )?;
-        let adjustments = statement.query_map(params![realm.as_str()], |row| {
-            let direction = match row.get::<_, String>(3)?.as_str() { "inflow" => Direction::Inflow, "outflow" => Direction::Outflow, _ => unreachable!() };
-            let kind = match row.get::<_, String>(4)?.as_str() { "trade" => AdjustmentKind::Trade, "exchange" => AdjustmentKind::Exchange, "crafting" => AdjustmentKind::Crafting, "other" => AdjustmentKind::Other, _ => unreachable!() };
-            Ok(LedgerAdjustment::new(row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, u64>(2)?, direction, kind))
-        })?.collect::<Result<Vec<_>>>()?;
+        let adjustments = statement
+            .query_map(params![realm.as_str()], |row| {
+                let direction = match row.get::<_, String>(3)?.as_str() {
+                    "inflow" => Direction::Inflow,
+                    "outflow" => Direction::Outflow,
+                    _ => unreachable!(),
+                };
+                let kind = match row.get::<_, String>(4)?.as_str() {
+                    "trade" => AdjustmentKind::Trade,
+                    "exchange" => AdjustmentKind::Exchange,
+                    "crafting" => AdjustmentKind::Crafting,
+                    "other" => AdjustmentKind::Other,
+                    _ => unreachable!(),
+                };
+                Ok(LedgerAdjustment::new(
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, u64>(2)?,
+                    direction,
+                    kind,
+                ))
+            })?
+            .collect::<Result<Vec<_>>>()?;
         Ok(adjustments)
     }
 }
@@ -279,5 +352,17 @@ fn price_source_name(source: PriceSource) -> &'static str {
     }
 }
 
-fn direction_name(direction: Direction) -> &'static str { match direction { Direction::Inflow => "inflow", Direction::Outflow => "outflow" } }
-fn adjustment_kind_name(kind: AdjustmentKind) -> &'static str { match kind { AdjustmentKind::Trade => "trade", AdjustmentKind::Exchange => "exchange", AdjustmentKind::Crafting => "crafting", AdjustmentKind::Other => "other" } }
+fn direction_name(direction: Direction) -> &'static str {
+    match direction {
+        Direction::Inflow => "inflow",
+        Direction::Outflow => "outflow",
+    }
+}
+fn adjustment_kind_name(kind: AdjustmentKind) -> &'static str {
+    match kind {
+        AdjustmentKind::Trade => "trade",
+        AdjustmentKind::Exchange => "exchange",
+        AdjustmentKind::Crafting => "crafting",
+        AdjustmentKind::Other => "other",
+    }
+}

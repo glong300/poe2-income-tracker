@@ -6,8 +6,13 @@ vi.mock("./lib/commands", () => ({
   getRealm: vi.fn().mockResolvedValue("international"),
   setRealm: vi.fn().mockResolvedValue(undefined),
   getPriceProviderStatus: vi.fn().mockResolvedValue({ provider: "PoeNinja", availability: "AwaitingSync", message: "国际服行情等待同步" }),
+  getWeeklyLedger: vi.fn().mockResolvedValue([]),
+  importManualPrices: vi.fn().mockResolvedValue(1),
+  getCaptureCandidates: vi.fn().mockResolvedValue([]),
+  confirmCaptureCandidate: vi.fn().mockResolvedValue(undefined),
+  rejectCaptureCandidate: vi.fn().mockResolvedValue(undefined),
 }));
-import { setRealm } from "./lib/commands";
+import { importManualPrices, setRealm } from "./lib/commands";
 import App from "./App.vue";
 
 describe("App", () => {
@@ -30,5 +35,15 @@ describe("App", () => {
     await wrapper.get('button[value="international"]').trigger("click");
 
     expect(setRealm).toHaveBeenCalledWith("international");
+  });
+
+  it("imports a manual price CSV from the pricing workspace", async () => {
+    const wrapper = mount(App);
+
+    await wrapper.get('[data-testid="nav-pricing"]').trigger("click");
+    await wrapper.get("textarea").setValue("currency_id,value,quoted_in,captured_at\nexalted,12,chaos,2026-09-03T12:00:00+08:00");
+    await wrapper.get("form").trigger("submit");
+
+    expect(importManualPrices).toHaveBeenCalled();
   });
 });
