@@ -1,11 +1,35 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
+use tauri::Manager;
+
 pub mod domain;
 pub mod storage;
 pub mod commands;
 
+pub struct AppState {
+    repository: std::sync::Mutex<storage::SqliteRepository>,
+}
+
+impl AppState {
+    pub fn open(path: &std::path::Path) -> rusqlite::Result<Self> {
+        Ok(Self { repository: std::sync::Mutex::new(storage::SqliteRepository::open(path)?) })
+    }
+
+    pub fn save_snapshot(&self, input: commands::CreateSnapshotInput) -> Result<(), commands::CommandError> {
+        let repository = self.repository.lock().map_err(|_| commands::CommandError { code: "state_error", message: "本地账本不可用".into() })?;
+        commands::create_snapshot(&repository, input)
+    }
+
+    pub fn snapshot_count(&self) -> rusqlite::Result<usize> {
+        Ok(self.repository.lock().expect("repository lock is not poisoned").list_snapshots()?.len())
+    }
+}
+
 #[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {}! You've been greeted from Rust!", name)
+fn create_snapshot(
+    state: tauri::State<'_, AppState>,
+    input: commands::CreateSnapshotInput,
+) -> Result<(), commands::CommandError> {
+    state.save_snapshot(input)
 }
 
 #[cfg(test)]
@@ -146,11 +170,34 @@ mod command_tests {
     }
 }
 
+#[cfg(test)]
+mod app_state_tests {
+    use super::{commands::{CreateSnapshotInput, CurrencyQuantityInput}, AppState};
+
+    #[test]
+    fn app_state_saves_a_snapshot_to_its_local_database() {
+        let path = std::env::temp_dir().join(format!("poe2-state-{}.sqlite", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let state = AppState::open(&path).unwrap();
+
+        state.save_snapshot(CreateSnapshotInput { captured_at: "2026-09-03T09:00:00+08:00".into(), entries: vec![CurrencyQuantityInput { currency_id: "exalted".into(), quantity: 5 }] }).unwrap();
+
+        assert_eq!(state.snapshot_count().unwrap(), 1);
+        std::fs::remove_file(path).unwrap();
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![greet])
+        .setup(|app| {
+            let data_directory = app.path().app_data_dir()?;
+            std::fs::create_dir_all(&data_directory)?;
+            app.manage(AppState::open(&data_directory.join("ledger.sqlite"))?);
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![create_snapshot])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

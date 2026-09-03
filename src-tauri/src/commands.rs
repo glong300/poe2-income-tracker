@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::domain::{CurrencyAmount, Snapshot};
 use crate::storage::SqliteRepository;
@@ -15,7 +15,7 @@ pub struct CreateSnapshotInput {
     pub entries: Vec<CurrencyQuantityInput>,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Serialize)]
 pub struct CommandError {
     pub code: &'static str,
     pub message: String,
