@@ -57,6 +57,12 @@ impl AppState {
         Ok(providers::provider_status(self.realm()?))
     }
 
+    pub fn save_adjustment(&self, adjustment: domain::LedgerAdjustment) -> Result<(), commands::CommandError> {
+        let repository = self.repository.lock().map_err(|_| commands::CommandError { code: "state_error", message: "本地账本不可用".into() })?;
+        let realm = repository.realm().map_err(|_| commands::CommandError { code: "storage_error", message: "无法读取当前区服".into() })?;
+        repository.save_adjustment_in_realm(realm, &adjustment).map_err(|_| commands::CommandError { code: "storage_error", message: "无法保存收支调整".into() })
+    }
+
     pub fn daily_ledger(
         &self,
         day: &str,
@@ -71,7 +77,9 @@ impl AppState {
                 code: "storage_error",
                 message: "无法读取本地账本".into(),
             })?;
-        domain::calculate_day(&snapshots, &[], day).map_err(|_| commands::CommandError {
+        let realm = repository.realm().map_err(|_| commands::CommandError { code: "storage_error", message: "无法读取当前区服".into() })?;
+        let adjustments = repository.list_adjustments_in_realm(realm).map_err(|_| commands::CommandError { code: "storage_error", message: "无法读取收支调整".into() })?;
+        domain::calculate_day(&snapshots, &adjustments, day).map_err(|_| commands::CommandError {
             code: "invalid_day",
             message: "日期格式无效".into(),
         })
@@ -348,6 +356,7 @@ mod app_state_tests {
 mod daily_ledger_command_tests {
     use super::{
         commands::{CreateSnapshotInput, CurrencyQuantityInput},
+        domain::{AdjustmentKind, Direction, LedgerAdjustment},
         AppState,
     };
 
@@ -378,6 +387,21 @@ mod daily_ledger_command_tests {
         let ledger = state.daily_ledger("2026-09-03").unwrap();
 
         assert_eq!(ledger[0].net_change, 7);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn includes_persisted_adjustments_in_the_daily_ledger() {
+        let path = std::env::temp_dir().join(format!("poe2-ledger-adjustment-{}.sqlite", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let state = AppState::open(&path).unwrap();
+        state.save_snapshot(CreateSnapshotInput { captured_at: "2026-09-03T09:00:00+08:00".into(), entries: vec![CurrencyQuantityInput { currency_id: "exalted".into(), quantity: 10 }] }).unwrap();
+        state.save_snapshot(CreateSnapshotInput { captured_at: "2026-09-03T21:00:00+08:00".into(), entries: vec![CurrencyQuantityInput { currency_id: "exalted".into(), quantity: 15 }] }).unwrap();
+        state.save_adjustment(LedgerAdjustment::new("2026-09-03T12:00:00+08:00", "exalted", 2, Direction::Outflow, AdjustmentKind::Crafting)).unwrap();
+
+        let ledger = state.daily_ledger("2026-09-03").unwrap();
+
+        assert_eq!(ledger[0].explained_change, -2);
         std::fs::remove_file(path).unwrap();
     }
 }
