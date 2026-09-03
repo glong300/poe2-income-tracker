@@ -1,6 +1,7 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 pub mod domain;
 pub mod storage;
+pub mod commands;
 
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -96,6 +97,24 @@ mod sqlite_repository_tests {
 
         assert_eq!(rows[0].net_change, 7);
         std::fs::remove_file(database_path).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod command_tests {
+    use super::commands::{validate_snapshot_input, CreateSnapshotInput, CurrencyQuantityInput};
+
+    #[test]
+    fn rejects_a_negative_quantity_at_the_command_boundary() {
+        let result = validate_snapshot_input(CreateSnapshotInput {
+            captured_at: "2026-09-03T09:00:00+08:00".into(),
+            entries: vec![CurrencyQuantityInput {
+                currency_id: "exalted".into(),
+                quantity: -1,
+            }],
+        });
+
+        assert_eq!(result.unwrap_err().code, "invalid_quantity");
     }
 }
 
