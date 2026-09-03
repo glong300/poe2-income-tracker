@@ -4,6 +4,7 @@ use tauri::Manager;
 pub mod commands;
 pub mod domain;
 pub mod pricing;
+pub mod providers;
 pub mod realm;
 pub mod storage;
 
@@ -50,6 +51,10 @@ impl AppState {
             .lock()
             .expect("repository lock is not poisoned")
             .set_realm(realm)
+    }
+
+    pub fn price_provider_status(&self) -> rusqlite::Result<providers::ProviderStatus> {
+        Ok(providers::provider_status(self.realm()?))
     }
 
     pub fn daily_ledger(
@@ -118,6 +123,18 @@ fn set_realm(
     realm: String,
 ) -> Result<(), commands::CommandError> {
     change_realm(&state, &realm)
+}
+
+#[tauri::command]
+fn get_price_provider_status(
+    state: tauri::State<'_, AppState>,
+) -> Result<providers::ProviderStatus, commands::CommandError> {
+    state
+        .price_provider_status()
+        .map_err(|_| commands::CommandError {
+            code: "storage_error",
+            message: "无法读取行情数据源状态".into(),
+        })
 }
 
 #[cfg(test)]
@@ -273,6 +290,7 @@ mod command_tests {
 mod app_state_tests {
     use super::{
         commands::{CreateSnapshotInput, CurrencyQuantityInput},
+        providers::{ProviderAvailability, ProviderId},
         realm::Realm,
         AppState,
     };
@@ -308,6 +326,20 @@ mod app_state_tests {
         state.set_realm(Realm::China).unwrap();
         assert_eq!(state.realm().unwrap(), Realm::China);
 
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn app_state_reports_the_current_realms_price_provider_status() {
+        let path = std::env::temp_dir().join(format!("poe2-provider-status-{}.sqlite", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let state = AppState::open(&path).unwrap();
+        state.set_realm(Realm::China).unwrap();
+
+        let status = state.price_provider_status().unwrap();
+
+        assert_eq!(status.provider, ProviderId::CNMarket);
+        assert_eq!(status.availability, ProviderAvailability::Unavailable);
         std::fs::remove_file(path).unwrap();
     }
 }
@@ -452,7 +484,8 @@ pub fn run() {
             create_snapshot,
             get_daily_ledger,
             get_realm,
-            set_realm
+            set_realm,
+            get_price_provider_status
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
