@@ -1,10 +1,10 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 use tauri::Manager;
 
+pub mod commands;
 pub mod domain;
 pub mod realm;
 pub mod storage;
-pub mod commands;
 
 pub struct AppState {
     repository: std::sync::Mutex<storage::SqliteRepository>,
@@ -12,22 +12,63 @@ pub struct AppState {
 
 impl AppState {
     pub fn open(path: &std::path::Path) -> rusqlite::Result<Self> {
-        Ok(Self { repository: std::sync::Mutex::new(storage::SqliteRepository::open(path)?) })
+        Ok(Self {
+            repository: std::sync::Mutex::new(storage::SqliteRepository::open(path)?),
+        })
     }
 
-    pub fn save_snapshot(&self, input: commands::CreateSnapshotInput) -> Result<(), commands::CommandError> {
-        let repository = self.repository.lock().map_err(|_| commands::CommandError { code: "state_error", message: "本地账本不可用".into() })?;
+    pub fn save_snapshot(
+        &self,
+        input: commands::CreateSnapshotInput,
+    ) -> Result<(), commands::CommandError> {
+        let repository = self.repository.lock().map_err(|_| commands::CommandError {
+            code: "state_error",
+            message: "本地账本不可用".into(),
+        })?;
         commands::create_snapshot(&repository, input)
     }
 
     pub fn snapshot_count(&self) -> rusqlite::Result<usize> {
-        Ok(self.repository.lock().expect("repository lock is not poisoned").list_snapshots()?.len())
+        Ok(self
+            .repository
+            .lock()
+            .expect("repository lock is not poisoned")
+            .list_snapshots()?
+            .len())
     }
 
-    pub fn daily_ledger(&self, day: &str) -> Result<Vec<domain::CurrencyDayLedger>, commands::CommandError> {
-        let repository = self.repository.lock().map_err(|_| commands::CommandError { code: "state_error", message: "本地账本不可用".into() })?;
-        let snapshots = repository.list_snapshots().map_err(|_| commands::CommandError { code: "storage_error", message: "无法读取本地账本".into() })?;
-        domain::calculate_day(&snapshots, &[], day).map_err(|_| commands::CommandError { code: "invalid_day", message: "日期格式无效".into() })
+    pub fn realm(&self) -> rusqlite::Result<realm::Realm> {
+        self.repository
+            .lock()
+            .expect("repository lock is not poisoned")
+            .realm()
+    }
+
+    pub fn set_realm(&self, realm: realm::Realm) -> rusqlite::Result<()> {
+        self.repository
+            .lock()
+            .expect("repository lock is not poisoned")
+            .set_realm(realm)
+    }
+
+    pub fn daily_ledger(
+        &self,
+        day: &str,
+    ) -> Result<Vec<domain::CurrencyDayLedger>, commands::CommandError> {
+        let repository = self.repository.lock().map_err(|_| commands::CommandError {
+            code: "state_error",
+            message: "本地账本不可用".into(),
+        })?;
+        let snapshots = repository
+            .list_snapshots()
+            .map_err(|_| commands::CommandError {
+                code: "storage_error",
+                message: "无法读取本地账本".into(),
+            })?;
+        domain::calculate_day(&snapshots, &[], day).map_err(|_| commands::CommandError {
+            code: "invalid_day",
+            message: "日期格式无效".into(),
+        })
     }
 }
 
@@ -40,8 +81,42 @@ fn create_snapshot(
 }
 
 #[tauri::command]
-fn get_daily_ledger(state: tauri::State<'_, AppState>, day: String) -> Result<Vec<domain::CurrencyDayLedger>, commands::CommandError> {
+fn get_daily_ledger(
+    state: tauri::State<'_, AppState>,
+    day: String,
+) -> Result<Vec<domain::CurrencyDayLedger>, commands::CommandError> {
     state.daily_ledger(&day)
+}
+
+fn current_realm(state: &AppState) -> Result<realm::Realm, commands::CommandError> {
+    state.realm().map_err(|_| commands::CommandError {
+        code: "storage_error",
+        message: "无法读取当前区服".into(),
+    })
+}
+
+fn change_realm(state: &AppState, value: &str) -> Result<(), commands::CommandError> {
+    let realm = realm::Realm::parse(value).ok_or_else(|| commands::CommandError {
+        code: "invalid_realm",
+        message: "区服必须为 international 或 china".into(),
+    })?;
+    state.set_realm(realm).map_err(|_| commands::CommandError {
+        code: "storage_error",
+        message: "无法保存当前区服".into(),
+    })
+}
+
+#[tauri::command]
+fn get_realm(state: tauri::State<'_, AppState>) -> Result<realm::Realm, commands::CommandError> {
+    current_realm(&state)
+}
+
+#[tauri::command]
+fn set_realm(
+    state: tauri::State<'_, AppState>,
+    realm: String,
+) -> Result<(), commands::CommandError> {
+    change_realm(&state, &realm)
 }
 
 #[cfg(test)]
@@ -53,8 +128,14 @@ mod ledger_tests {
     #[test]
     fn calculates_net_explained_and_unattributed_change_for_one_currency() {
         let snapshots = vec![
-            Snapshot::valid("2026-09-03T09:00:00+08:00", vec![CurrencyAmount::new("exalted", 10)]),
-            Snapshot::valid("2026-09-03T21:00:00+08:00", vec![CurrencyAmount::new("exalted", 17)]),
+            Snapshot::valid(
+                "2026-09-03T09:00:00+08:00",
+                vec![CurrencyAmount::new("exalted", 10)],
+            ),
+            Snapshot::valid(
+                "2026-09-03T21:00:00+08:00",
+                vec![CurrencyAmount::new("exalted", 17)],
+            ),
         ];
         let adjustments = vec![LedgerAdjustment::new(
             "2026-09-03T12:00:00+08:00",
@@ -76,9 +157,18 @@ mod ledger_tests {
     #[test]
     fn excludes_invalid_snapshots_from_daily_calculation() {
         let snapshots = vec![
-            Snapshot::valid("2026-09-03T09:00:00+08:00", vec![CurrencyAmount::new("exalted", 10)]),
-            Snapshot::invalid("2026-09-03T12:00:00+08:00", vec![CurrencyAmount::new("exalted", 999)]),
-            Snapshot::valid("2026-09-03T21:00:00+08:00", vec![CurrencyAmount::new("exalted", 17)]),
+            Snapshot::valid(
+                "2026-09-03T09:00:00+08:00",
+                vec![CurrencyAmount::new("exalted", 10)],
+            ),
+            Snapshot::invalid(
+                "2026-09-03T12:00:00+08:00",
+                vec![CurrencyAmount::new("exalted", 999)],
+            ),
+            Snapshot::valid(
+                "2026-09-03T21:00:00+08:00",
+                vec![CurrencyAmount::new("exalted", 17)],
+            ),
         ];
 
         let rows = calculate_day(&snapshots, &[], "2026-09-03").unwrap();
@@ -107,10 +197,8 @@ mod sqlite_repository_tests {
 
     #[test]
     fn persists_snapshots_and_rebuilds_daily_ledger_after_reopening() {
-        let database_path = std::env::temp_dir().join(format!(
-            "poe2-income-tracker-{}.sqlite",
-            std::process::id()
-        ));
+        let database_path =
+            std::env::temp_dir().join(format!("poe2-income-tracker-{}.sqlite", std::process::id()));
         let _ = std::fs::remove_file(&database_path);
 
         let repository = SqliteRepository::open(&database_path).unwrap();
@@ -158,10 +246,8 @@ mod command_tests {
 
     #[test]
     fn saves_a_validated_snapshot_through_the_command_service() {
-        let database_path = std::env::temp_dir().join(format!(
-            "poe2-income-command-{}.sqlite",
-            std::process::id()
-        ));
+        let database_path =
+            std::env::temp_dir().join(format!("poe2-income-command-{}.sqlite", std::process::id()));
         let _ = std::fs::remove_file(&database_path);
         let repository = SqliteRepository::open(&database_path).unwrap();
 
@@ -184,7 +270,11 @@ mod command_tests {
 
 #[cfg(test)]
 mod app_state_tests {
-    use super::{commands::{CreateSnapshotInput, CurrencyQuantityInput}, AppState};
+    use super::{
+        commands::{CreateSnapshotInput, CurrencyQuantityInput},
+        realm::Realm,
+        AppState,
+    };
 
     #[test]
     fn app_state_saves_a_snapshot_to_its_local_database() {
@@ -192,24 +282,65 @@ mod app_state_tests {
         let _ = std::fs::remove_file(&path);
         let state = AppState::open(&path).unwrap();
 
-        state.save_snapshot(CreateSnapshotInput { captured_at: "2026-09-03T09:00:00+08:00".into(), entries: vec![CurrencyQuantityInput { currency_id: "exalted".into(), quantity: 5 }] }).unwrap();
+        state
+            .save_snapshot(CreateSnapshotInput {
+                captured_at: "2026-09-03T09:00:00+08:00".into(),
+                entries: vec![CurrencyQuantityInput {
+                    currency_id: "exalted".into(),
+                    quantity: 5,
+                }],
+            })
+            .unwrap();
 
         assert_eq!(state.snapshot_count().unwrap(), 1);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn app_state_exposes_the_selected_realm() {
+        let path =
+            std::env::temp_dir().join(format!("poe2-state-realm-{}.sqlite", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let state = AppState::open(&path).unwrap();
+
+        assert_eq!(state.realm().unwrap(), Realm::International);
+        state.set_realm(Realm::China).unwrap();
+        assert_eq!(state.realm().unwrap(), Realm::China);
+
         std::fs::remove_file(path).unwrap();
     }
 }
 
 #[cfg(test)]
 mod daily_ledger_command_tests {
-    use super::{commands::{CreateSnapshotInput, CurrencyQuantityInput}, AppState};
+    use super::{
+        commands::{CreateSnapshotInput, CurrencyQuantityInput},
+        AppState,
+    };
 
     #[test]
     fn returns_the_daily_ledger_from_persisted_snapshots() {
         let path = std::env::temp_dir().join(format!("poe2-ledger-{}.sqlite", std::process::id()));
         let _ = std::fs::remove_file(&path);
         let state = AppState::open(&path).unwrap();
-        state.save_snapshot(CreateSnapshotInput { captured_at: "2026-09-03T09:00:00+08:00".into(), entries: vec![CurrencyQuantityInput { currency_id: "exalted".into(), quantity: 10 }] }).unwrap();
-        state.save_snapshot(CreateSnapshotInput { captured_at: "2026-09-03T21:00:00+08:00".into(), entries: vec![CurrencyQuantityInput { currency_id: "exalted".into(), quantity: 17 }] }).unwrap();
+        state
+            .save_snapshot(CreateSnapshotInput {
+                captured_at: "2026-09-03T09:00:00+08:00".into(),
+                entries: vec![CurrencyQuantityInput {
+                    currency_id: "exalted".into(),
+                    quantity: 10,
+                }],
+            })
+            .unwrap();
+        state
+            .save_snapshot(CreateSnapshotInput {
+                captured_at: "2026-09-03T21:00:00+08:00".into(),
+                entries: vec![CurrencyQuantityInput {
+                    currency_id: "exalted".into(),
+                    quantity: 17,
+                }],
+            })
+            .unwrap();
 
         let ledger = state.daily_ledger("2026-09-03").unwrap();
 
@@ -220,13 +351,89 @@ mod daily_ledger_command_tests {
 
 #[cfg(test)]
 mod realm_tests {
-    use super::realm::Realm;
+    use super::{change_realm, current_realm, realm::Realm, storage::SqliteRepository, AppState};
 
     #[test]
     fn parses_the_two_supported_realms() {
         assert_eq!(Realm::parse("international"), Some(Realm::International));
         assert_eq!(Realm::parse("china"), Some(Realm::China));
         assert_eq!(Realm::parse("other"), None);
+    }
+
+    #[test]
+    fn persists_the_selected_realm_in_local_profile() {
+        let path = std::env::temp_dir().join(format!("poe2-realm-{}.sqlite", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let repository = SqliteRepository::open(&path).unwrap();
+        assert_eq!(repository.realm().unwrap(), Realm::International);
+        repository.set_realm(Realm::China).unwrap();
+        drop(repository);
+
+        assert_eq!(
+            SqliteRepository::open(&path).unwrap().realm().unwrap(),
+            Realm::China
+        );
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn keeps_snapshots_isolated_by_realm() {
+        let path = std::env::temp_dir().join(format!(
+            "poe2-realm-snapshots-{}.sqlite",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        let repository = SqliteRepository::open(&path).unwrap();
+
+        repository
+            .save_snapshot_in_realm(
+                Realm::International,
+                &super::domain::Snapshot::valid(
+                    "2026-09-03T09:00:00+08:00",
+                    vec![super::domain::CurrencyAmount::new("exalted", 10)],
+                ),
+            )
+            .unwrap();
+        repository
+            .save_snapshot_in_realm(
+                Realm::China,
+                &super::domain::Snapshot::valid(
+                    "2026-09-03T09:00:00+08:00",
+                    vec![super::domain::CurrencyAmount::new("exalted", 30)],
+                ),
+            )
+            .unwrap();
+
+        assert_eq!(
+            repository
+                .list_snapshots_in_realm(Realm::International)
+                .unwrap()[0]
+                .entries[0]
+                .quantity,
+            10
+        );
+        assert_eq!(
+            repository.list_snapshots_in_realm(Realm::China).unwrap()[0].entries[0].quantity,
+            30
+        );
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn changes_realm_through_the_command_boundary() {
+        let path =
+            std::env::temp_dir().join(format!("poe2-realm-command-{}.sqlite", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let state = AppState::open(&path).unwrap();
+
+        change_realm(&state, "china").unwrap();
+
+        assert_eq!(current_realm(&state).unwrap(), Realm::China);
+        assert_eq!(
+            change_realm(&state, "unsupported").unwrap_err().code,
+            "invalid_realm"
+        );
+        std::fs::remove_file(path).unwrap();
     }
 }
 
@@ -240,7 +447,12 @@ pub fn run() {
             app.manage(AppState::open(&data_directory.join("ledger.sqlite"))?);
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![create_snapshot, get_daily_ledger])
+        .invoke_handler(tauri::generate_handler![
+            create_snapshot,
+            get_daily_ledger,
+            get_realm,
+            set_realm
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
