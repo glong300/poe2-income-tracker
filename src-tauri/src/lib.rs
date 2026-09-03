@@ -1,5 +1,6 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 pub mod domain;
+pub mod storage;
 
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -59,6 +60,42 @@ mod ledger_tests {
         );
 
         assert_eq!(result.unwrap_err(), "duplicate currency entry: exalted");
+    }
+}
+
+#[cfg(test)]
+mod sqlite_repository_tests {
+    use super::domain::{calculate_day, CurrencyAmount, Snapshot};
+    use super::storage::SqliteRepository;
+
+    #[test]
+    fn persists_snapshots_and_rebuilds_daily_ledger_after_reopening() {
+        let database_path = std::env::temp_dir().join(format!(
+            "poe2-income-tracker-{}.sqlite",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&database_path);
+
+        let repository = SqliteRepository::open(&database_path).unwrap();
+        repository
+            .save_snapshot(&Snapshot::valid(
+                "2026-09-03T09:00:00+08:00",
+                vec![CurrencyAmount::new("exalted", 10)],
+            ))
+            .unwrap();
+        repository
+            .save_snapshot(&Snapshot::valid(
+                "2026-09-03T21:00:00+08:00",
+                vec![CurrencyAmount::new("exalted", 17)],
+            ))
+            .unwrap();
+        drop(repository);
+
+        let reopened = SqliteRepository::open(&database_path).unwrap();
+        let rows = calculate_day(&reopened.list_snapshots().unwrap(), &[], "2026-09-03").unwrap();
+
+        assert_eq!(rows[0].net_change, 7);
+        std::fs::remove_file(database_path).unwrap();
     }
 }
 
