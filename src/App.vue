@@ -1,11 +1,19 @@
 <script setup lang="ts">
 import { ref } from "vue";
 import SnapshotForm from "./components/SnapshotForm.vue";
+import { saveSnapshot } from "./lib/commands";
 
-const pendingEntryCount = ref<number | null>(null);
+const savedEntryCount = ref<number | null>(null);
+const saveError = ref("");
 
-function recordPendingSnapshot(entries: { currencyId: string; quantity: number }[]) {
-  pendingEntryCount.value = entries.length;
+async function recordSnapshot(entries: { currencyId: string; quantity: number }[]) {
+  saveError.value = "";
+  try {
+    await saveSnapshot(entries.map((entry) => ({ currency_id: entry.currencyId, quantity: entry.quantity })));
+    savedEntryCount.value = entries.length;
+  } catch {
+    saveError.value = "无法保存本地快照，请重试。";
+  }
 }
 </script>
 
@@ -14,13 +22,14 @@ function recordPendingSnapshot(entries: { currencyId: string; quantity: number }
     <section>
       <p class="eyebrow">LOCAL LEDGER / POE2</p>
       <h1>POE2 每日通货收益</h1>
-      <p v-if="pendingEntryCount !== null" class="pending-summary">
-        已记录 {{ pendingEntryCount }} 项通货余额，等待写入本地账本。
+      <p v-if="savedEntryCount !== null" class="pending-summary">
+        快照已保存：{{ savedEntryCount }} 项通货余额。
       </p>
+      <p v-if="saveError" class="save-error" role="alert">{{ saveError }}</p>
     </section>
     <SnapshotForm
       :currencies="[{ id: 'exalted', name: '崇高石' }]"
-      @submit="recordPendingSnapshot"
+      @submit="recordSnapshot"
     />
   </main>
 </template>
@@ -30,4 +39,5 @@ function recordPendingSnapshot(entries: { currencyId: string; quantity: number }
 .eyebrow { color: #c78637; letter-spacing: .16em; font-size: 12px; }
 h1 { max-width: 440px; margin: 12px 0; font: 700 46px Georgia, serif; line-height: 1.04; }
 .pending-summary { color: #d8ccb7; }
+.save-error { color: #ff9b78; }
 </style>

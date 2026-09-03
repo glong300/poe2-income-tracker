@@ -1,5 +1,6 @@
 import { mount } from "@vue/test-utils";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+vi.mock("./lib/commands", () => ({ saveSnapshot: vi.fn().mockResolvedValue(undefined) }));
 import App from "./App.vue";
 
 describe("App", () => {
@@ -13,6 +14,6 @@ describe("App", () => {
     await wrapper.get('[name="quantity-exalted"]').setValue("12");
     await wrapper.get("form").trigger("submit");
 
-    expect(wrapper.text()).toContain("已记录 1 项通货余额");
+    expect(wrapper.text()).toContain("快照已保存：1 项通货余额");
   });
 });
