@@ -89,6 +89,14 @@ impl AppState {
             message: "日期格式无效".into(),
         })
     }
+
+    pub fn weekly_ledger(&self, week_start: &str) -> Result<Vec<domain::CurrencyDayLedger>, commands::CommandError> {
+        let repository = self.repository.lock().map_err(|_| commands::CommandError { code: "state_error", message: "本地账本不可用".into() })?;
+        let snapshots = repository.list_snapshots().map_err(|_| commands::CommandError { code: "storage_error", message: "无法读取本地账本".into() })?;
+        let realm = repository.realm().map_err(|_| commands::CommandError { code: "storage_error", message: "无法读取当前区服".into() })?;
+        let adjustments = repository.list_adjustments_in_realm(realm).map_err(|_| commands::CommandError { code: "storage_error", message: "无法读取收支调整".into() })?;
+        domain::calculate_week(&snapshots, &adjustments, week_start).map_err(|_| commands::CommandError { code: "invalid_day", message: "周起始日期无效".into() })
+    }
 }
 
 #[tauri::command]
@@ -113,6 +121,11 @@ fn get_daily_ledger(
     day: String,
 ) -> Result<Vec<domain::CurrencyDayLedger>, commands::CommandError> {
     state.daily_ledger(&day)
+}
+
+#[tauri::command]
+fn get_weekly_ledger(state: tauri::State<'_, AppState>, week_start: String) -> Result<Vec<domain::CurrencyDayLedger>, commands::CommandError> {
+    state.weekly_ledger(&week_start)
 }
 
 fn current_realm(state: &AppState) -> Result<realm::Realm, commands::CommandError> {
@@ -463,6 +476,18 @@ mod daily_ledger_command_tests {
         assert_eq!(ledger[0].explained_change, -2);
         std::fs::remove_file(path).unwrap();
     }
+
+    #[test]
+    fn returns_weekly_ledger_from_persisted_snapshots() {
+        let path = std::env::temp_dir().join(format!("poe2-weekly-ledger-{}.sqlite", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let state = AppState::open(&path).unwrap();
+        state.save_snapshot(CreateSnapshotInput { captured_at: "2026-09-01T09:00:00+08:00".into(), entries: vec![CurrencyQuantityInput { currency_id: "exalted".into(), quantity: 10 }] }).unwrap();
+        state.save_snapshot(CreateSnapshotInput { captured_at: "2026-09-07T21:00:00+08:00".into(), entries: vec![CurrencyQuantityInput { currency_id: "exalted".into(), quantity: 16 }] }).unwrap();
+
+        assert_eq!(state.weekly_ledger("2026-09-01").unwrap()[0].net_change, 6);
+        std::fs::remove_file(path).unwrap();
+    }
 }
 
 #[cfg(test)]
@@ -593,6 +618,7 @@ pub fn run() {
             create_snapshot,
             create_adjustment,
             get_daily_ledger,
+            get_weekly_ledger,
             get_realm,
             set_realm,
             get_price_provider_status
