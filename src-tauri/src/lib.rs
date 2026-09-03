@@ -161,7 +161,7 @@ fn get_price_provider_status(
 #[cfg(test)]
 mod ledger_tests {
     use super::domain::{
-        calculate_day, AdjustmentKind, CurrencyAmount, Direction, LedgerAdjustment, Snapshot,
+        calculate_day, calculate_week, AdjustmentKind, CurrencyAmount, Direction, LedgerAdjustment, Snapshot,
     };
 
     #[test]
@@ -226,6 +226,20 @@ mod ledger_tests {
         );
 
         assert_eq!(result.unwrap_err(), "duplicate currency entry: exalted");
+    }
+
+    #[test]
+    fn calculates_weekly_change_from_first_to_last_snapshot() {
+        let snapshots = vec![
+            Snapshot::valid("2026-09-01T09:00:00+08:00", vec![CurrencyAmount::new("exalted", 10)]),
+            Snapshot::valid("2026-09-07T21:00:00+08:00", vec![CurrencyAmount::new("exalted", 18)]),
+        ];
+        let adjustments = vec![LedgerAdjustment::new("2026-09-04T12:00:00+08:00", "exalted", 3, Direction::Inflow, AdjustmentKind::Trade)];
+
+        let rows = calculate_week(&snapshots, &adjustments, "2026-09-01").unwrap();
+
+        assert_eq!(rows[0].net_change, 8);
+        assert_eq!(rows[0].explained_change, 3);
     }
 }
 
