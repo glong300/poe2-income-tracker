@@ -3,7 +3,7 @@ use std::path::Path;
 use rusqlite::{params, Connection, Result};
 
 use crate::domain::{AdjustmentKind, CurrencyAmount, Direction, LedgerAdjustment, Snapshot, SnapshotStatus};
-use crate::adapters::capture::CaptureCandidate;
+use crate::adapters::capture::{CaptureCandidate, StoredCaptureCandidate};
 use crate::pricing::{effective_price, PriceSnapshot, PriceSource};
 use crate::realm::Realm;
 
@@ -211,6 +211,24 @@ impl SqliteRepository {
             params![candidate.realm_hint.map(Realm::as_str), serde_json::to_string(&candidate.entries).unwrap(), candidate.confidence],
         )?;
         Ok(())
+    }
+
+    pub fn list_capture_candidates(&self) -> Result<Vec<StoredCaptureCandidate>> {
+        let mut statement = self.connection.prepare("SELECT id, realm_hint, entries_json, confidence FROM capture_candidates ORDER BY id ASC")?;
+        let rows = statement.query_map([], |row| {
+            let realm_hint = row.get::<_, Option<String>>(1)?.and_then(|value| Realm::parse(&value));
+            let entries = serde_json::from_str(&row.get::<_, String>(2)?).unwrap_or_default();
+            Ok(StoredCaptureCandidate { id: row.get(0)?, candidate: CaptureCandidate::new(realm_hint, entries, row.get(3)?) })
+        })?.collect::<Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    pub fn confirm_capture_candidate(&self, id: i64, realm: Realm, captured_at: &str) -> Result<bool> {
+        let candidate = self.list_capture_candidates()?.into_iter().find(|candidate| candidate.id == id);
+        let Some(candidate) = candidate else { return Ok(false); };
+        self.save_snapshot_in_realm(realm, &Snapshot::valid(captured_at, candidate.candidate.entries))?;
+        self.connection.execute("DELETE FROM capture_candidates WHERE id = ?1", params![id])?;
+        Ok(true)
     }
 
     pub fn list_adjustments_in_realm(&self, realm: Realm) -> Result<Vec<LedgerAdjustment>> {
