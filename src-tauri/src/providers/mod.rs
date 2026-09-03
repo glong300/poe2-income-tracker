@@ -2,6 +2,9 @@ use serde::Serialize;
 
 use crate::realm::Realm;
 
+pub mod cn_market;
+pub mod poe_ninja;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum ProviderId {
     PoeNinja,
@@ -38,7 +41,7 @@ pub fn provider_status(realm: Realm) -> ProviderStatus {
 
 #[cfg(test)]
 mod tests {
-    use super::{provider_status, ProviderAvailability, ProviderId};
+    use super::{cn_market::CNMarketProvider, poe_ninja::PoeNinjaProvider, provider_status, ProviderAvailability, ProviderId};
     use crate::realm::Realm;
 
     #[test]
@@ -48,5 +51,11 @@ mod tests {
         assert_eq!(status.provider, ProviderId::CNMarket);
         assert_eq!(status.availability, ProviderAvailability::Unavailable);
         assert_eq!(status.message, "国服行情数据源尚未配置");
+    }
+
+    #[test]
+    fn keeps_the_two_provider_boundaries_realm_specific() {
+        assert_eq!(PoeNinjaProvider::realm(), Realm::International);
+        assert_eq!(CNMarketProvider::realm(), Realm::China);
     }
 }
