@@ -63,6 +63,11 @@ impl AppState {
         repository.save_adjustment_in_realm(realm, &adjustment).map_err(|_| commands::CommandError { code: "storage_error", message: "无法保存收支调整".into() })
     }
 
+    pub fn save_adjustment_input(&self, input: commands::AdjustmentInput) -> Result<(), commands::CommandError> {
+        let repository = self.repository.lock().map_err(|_| commands::CommandError { code: "state_error", message: "本地账本不可用".into() })?;
+        commands::create_adjustment(&repository, input)
+    }
+
     pub fn daily_ledger(
         &self,
         day: &str,
@@ -92,6 +97,14 @@ fn create_snapshot(
     input: commands::CreateSnapshotInput,
 ) -> Result<(), commands::CommandError> {
     state.save_snapshot(input)
+}
+
+#[tauri::command]
+fn create_adjustment(
+    state: tauri::State<'_, AppState>,
+    input: commands::AdjustmentInput,
+) -> Result<(), commands::CommandError> {
+    state.save_adjustment_input(input)
 }
 
 #[tauri::command]
@@ -306,6 +319,23 @@ mod command_tests {
         assert_eq!(adjustment.direction, Direction::Outflow);
         assert_eq!(adjustment.kind, AdjustmentKind::Crafting);
         std::fs::remove_file(database_path).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod adjustment_state_tests {
+    use super::{commands::AdjustmentInput, AppState};
+
+    #[test]
+    fn app_state_saves_an_adjustment_from_command_input() {
+        let path = std::env::temp_dir().join(format!("poe2-adjustment-state-{}.sqlite", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let state = AppState::open(&path).unwrap();
+
+        state.save_adjustment_input(AdjustmentInput { occurred_at: "2026-09-03T12:00:00+08:00".into(), currency_id: "exalted".into(), quantity: 2, direction: "inflow".into(), kind: "trade".into() }).unwrap();
+
+        assert_eq!(state.daily_ledger("2026-09-03").unwrap(), Vec::new());
+        std::fs::remove_file(path).unwrap();
     }
 }
 
@@ -547,6 +577,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             create_snapshot,
+            create_adjustment,
             get_daily_ledger,
             get_realm,
             set_realm,
