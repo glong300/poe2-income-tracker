@@ -3,6 +3,7 @@ use std::path::Path;
 use rusqlite::{params, Connection, Result};
 
 use crate::domain::{CurrencyAmount, Snapshot, SnapshotStatus};
+use crate::pricing::{effective_price, PriceSnapshot, PriceSource};
 use crate::realm::Realm;
 
 pub struct SqliteRepository {
@@ -32,6 +33,16 @@ impl SqliteRepository {
                 realm TEXT NOT NULL CHECK (realm IN ('international', 'china'))
             );
             INSERT OR IGNORE INTO profile (id, realm) VALUES (1, 'international');
+            CREATE TABLE IF NOT EXISTS price_snapshots (
+                id INTEGER PRIMARY KEY,
+                realm TEXT NOT NULL CHECK (realm IN ('international', 'china')),
+                currency_id TEXT NOT NULL,
+                value INTEGER NOT NULL CHECK (value > 0),
+                quoted_in TEXT NOT NULL,
+                source TEXT NOT NULL CHECK (source IN ('automatic', 'manual')),
+                captured_at TEXT NOT NULL,
+                confirmed INTEGER NOT NULL CHECK (confirmed IN (0, 1))
+            );
             ",
         )?;
         migrate_snapshots_realm(&connection)?;
@@ -122,6 +133,53 @@ impl SqliteRepository {
 
         Ok(snapshots)
     }
+
+    pub fn save_price_snapshot(&self, price: &PriceSnapshot) -> Result<()> {
+        self.connection.execute(
+            "INSERT INTO price_snapshots (realm, currency_id, value, quoted_in, source, captured_at, confirmed) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                price.realm.as_str(),
+                price.currency_id,
+                price.value as i64,
+                price.quoted_in,
+                price_source_name(price.source),
+                price.captured_at,
+                price.confirmed,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn effective_price(
+        &self,
+        realm: Realm,
+        currency_id: &str,
+        captured_at: &str,
+    ) -> Result<Option<PriceSnapshot>> {
+        let mut statement = self.connection.prepare(
+            "SELECT realm, currency_id, value, quoted_in, source, captured_at, confirmed FROM price_snapshots WHERE realm = ?1 AND currency_id = ?2 AND captured_at = ?3",
+        )?;
+        let prices = statement
+            .query_map(params![realm.as_str(), currency_id, captured_at], |row| {
+                let source = match row.get::<_, String>(4)?.as_str() {
+                    "automatic" => PriceSource::Automatic,
+                    "manual" => PriceSource::Manual,
+                    _ => unreachable!("database source constraint prevents unknown sources"),
+                };
+                Ok(PriceSnapshot::new(
+                    Realm::parse(&row.get::<_, String>(0)?).expect("database realm constraint prevents unknown realms"),
+                    row.get::<_, String>(1)?,
+                    row.get::<_, u64>(2)?,
+                    row.get::<_, String>(3)?,
+                    source,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, bool>(6)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok(effective_price(&prices, realm, currency_id, captured_at).cloned())
+    }
 }
 
 fn migrate_snapshots_realm(connection: &Connection) -> Result<()> {
@@ -149,5 +207,12 @@ fn status_name(status: SnapshotStatus) -> &'static str {
     match status {
         SnapshotStatus::Valid => "valid",
         SnapshotStatus::Invalid => "invalid",
+    }
+}
+
+fn price_source_name(source: PriceSource) -> &'static str {
+    match source {
+        PriceSource::Automatic => "automatic",
+        PriceSource::Manual => "manual",
     }
 }

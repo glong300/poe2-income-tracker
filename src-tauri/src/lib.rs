@@ -3,6 +3,7 @@ use tauri::Manager;
 
 pub mod commands;
 pub mod domain;
+pub mod pricing;
 pub mod realm;
 pub mod storage;
 
