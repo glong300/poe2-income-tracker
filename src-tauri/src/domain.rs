@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use serde::Serialize;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CurrencyAmount {
@@ -105,7 +106,7 @@ impl LedgerAdjustment {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct CurrencyDayLedger {
     pub currency_id: String,
     pub net_change: i64,

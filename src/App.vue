@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { onMounted, ref } from "vue";
 import SnapshotForm from "./components/SnapshotForm.vue";
-import { saveSnapshot } from "./lib/commands";
+import { getDailyLedger, saveSnapshot, type DailyLedgerRow } from "./lib/commands";
 
 const savedEntryCount = ref<number | null>(null);
 const saveError = ref("");
+const ledgerRows = ref<DailyLedgerRow[]>([]);
 
 async function recordSnapshot(entries: { currencyId: string; quantity: number }[]) {
   saveError.value = "";
@@ -15,6 +16,10 @@ async function recordSnapshot(entries: { currencyId: string; quantity: number }[
     saveError.value = "无法保存本地快照，请重试。";
   }
 }
+
+onMounted(async () => {
+  ledgerRows.value = await getDailyLedger(new Date().toISOString().slice(0, 10));
+});
 </script>
 
 <template>
@@ -26,6 +31,10 @@ async function recordSnapshot(entries: { currencyId: string; quantity: number }[
         快照已保存：{{ savedEntryCount }} 项通货余额。
       </p>
       <p v-if="saveError" class="save-error" role="alert">{{ saveError }}</p>
+      <div class="ledger-summary">
+        <span>今日净变化</span>
+        <strong>{{ ledgerRows.reduce((total, row) => total + row.net_change, 0) }}</strong>
+      </div>
     </section>
     <SnapshotForm
       :currencies="[{ id: 'exalted', name: '崇高石' }]"

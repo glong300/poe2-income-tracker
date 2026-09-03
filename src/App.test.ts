@@ -1,6 +1,6 @@
 import { mount } from "@vue/test-utils";
 import { describe, expect, it, vi } from "vitest";
-vi.mock("./lib/commands", () => ({ saveSnapshot: vi.fn().mockResolvedValue(undefined) }));
+vi.mock("./lib/commands", () => ({ saveSnapshot: vi.fn().mockResolvedValue(undefined), getDailyLedger: vi.fn().mockResolvedValue([]) }));
 import App from "./App.vue";
 
 describe("App", () => {

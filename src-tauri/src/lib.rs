@@ -22,6 +22,12 @@ impl AppState {
     pub fn snapshot_count(&self) -> rusqlite::Result<usize> {
         Ok(self.repository.lock().expect("repository lock is not poisoned").list_snapshots()?.len())
     }
+
+    pub fn daily_ledger(&self, day: &str) -> Result<Vec<domain::CurrencyDayLedger>, commands::CommandError> {
+        let repository = self.repository.lock().map_err(|_| commands::CommandError { code: "state_error", message: "本地账本不可用".into() })?;
+        let snapshots = repository.list_snapshots().map_err(|_| commands::CommandError { code: "storage_error", message: "无法读取本地账本".into() })?;
+        domain::calculate_day(&snapshots, &[], day).map_err(|_| commands::CommandError { code: "invalid_day", message: "日期格式无效".into() })
+    }
 }
 
 #[tauri::command]
@@ -30,6 +36,11 @@ fn create_snapshot(
     input: commands::CreateSnapshotInput,
 ) -> Result<(), commands::CommandError> {
     state.save_snapshot(input)
+}
+
+#[tauri::command]
+fn get_daily_ledger(state: tauri::State<'_, AppState>, day: String) -> Result<Vec<domain::CurrencyDayLedger>, commands::CommandError> {
+    state.daily_ledger(&day)
 }
 
 #[cfg(test)]
@@ -187,6 +198,25 @@ mod app_state_tests {
     }
 }
 
+#[cfg(test)]
+mod daily_ledger_command_tests {
+    use super::{commands::{CreateSnapshotInput, CurrencyQuantityInput}, AppState};
+
+    #[test]
+    fn returns_the_daily_ledger_from_persisted_snapshots() {
+        let path = std::env::temp_dir().join(format!("poe2-ledger-{}.sqlite", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let state = AppState::open(&path).unwrap();
+        state.save_snapshot(CreateSnapshotInput { captured_at: "2026-09-03T09:00:00+08:00".into(), entries: vec![CurrencyQuantityInput { currency_id: "exalted".into(), quantity: 10 }] }).unwrap();
+        state.save_snapshot(CreateSnapshotInput { captured_at: "2026-09-03T21:00:00+08:00".into(), entries: vec![CurrencyQuantityInput { currency_id: "exalted".into(), quantity: 17 }] }).unwrap();
+
+        let ledger = state.daily_ledger("2026-09-03").unwrap();
+
+        assert_eq!(ledger[0].net_change, 7);
+        std::fs::remove_file(path).unwrap();
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -197,7 +227,7 @@ pub fn run() {
             app.manage(AppState::open(&data_directory.join("ledger.sqlite"))?);
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![create_snapshot])
+        .invoke_handler(tauri::generate_handler![create_snapshot, get_daily_ledger])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
