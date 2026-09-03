@@ -2,6 +2,7 @@
 use tauri::Manager;
 
 pub mod commands;
+pub mod adapters;
 pub mod domain;
 pub mod pricing;
 pub mod providers;
@@ -363,6 +364,19 @@ mod adjustment_state_tests {
 
         assert_eq!(state.daily_ledger("2026-09-03").unwrap(), Vec::new());
         std::fs::remove_file(path).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod capture_candidate_tests {
+    use super::{adapters::capture::CaptureCandidate, domain::CurrencyAmount, realm::Realm};
+
+    #[test]
+    fn candidate_is_not_a_snapshot_until_confirmed() {
+        let candidate = CaptureCandidate::new(Some(Realm::China), vec![CurrencyAmount::new("exalted", 12)], 88);
+
+        assert_eq!(candidate.entries[0].quantity, 12);
+        assert_eq!(candidate.realm_hint, Some(Realm::China));
     }
 }
 
