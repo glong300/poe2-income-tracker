@@ -253,8 +253,9 @@ mod sqlite_repository_tests {
 #[cfg(test)]
 mod command_tests {
     use super::commands::{
-        create_snapshot, validate_snapshot_input, CreateSnapshotInput, CurrencyQuantityInput,
+        create_adjustment, create_snapshot, validate_snapshot_input, AdjustmentInput, CreateSnapshotInput, CurrencyQuantityInput,
     };
+    use super::domain::{AdjustmentKind, Direction};
     use super::storage::SqliteRepository;
 
     #[test]
@@ -290,6 +291,20 @@ mod command_tests {
         .unwrap();
 
         assert_eq!(repository.list_snapshots().unwrap().len(), 1);
+        std::fs::remove_file(database_path).unwrap();
+    }
+
+    #[test]
+    fn validates_and_saves_a_crafting_outflow_adjustment() {
+        let database_path = std::env::temp_dir().join(format!("poe2-adjustment-command-{}.sqlite", std::process::id()));
+        let _ = std::fs::remove_file(&database_path);
+        let repository = SqliteRepository::open(&database_path).unwrap();
+
+        create_adjustment(&repository, AdjustmentInput { occurred_at: "2026-09-03T12:00:00+08:00".into(), currency_id: "exalted".into(), quantity: 2, direction: "outflow".into(), kind: "crafting".into() }).unwrap();
+
+        let adjustment = repository.list_adjustments_in_realm(super::realm::Realm::China).unwrap().pop().unwrap();
+        assert_eq!(adjustment.direction, Direction::Outflow);
+        assert_eq!(adjustment.kind, AdjustmentKind::Crafting);
         std::fs::remove_file(database_path).unwrap();
     }
 }
