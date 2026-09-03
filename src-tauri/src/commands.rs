@@ -1,6 +1,7 @@
 use serde::Deserialize;
 
 use crate::domain::{CurrencyAmount, Snapshot};
+use crate::storage::SqliteRepository;
 
 #[derive(Debug, Deserialize)]
 pub struct CurrencyQuantityInput {
@@ -33,5 +34,16 @@ pub fn validate_snapshot_input(input: CreateSnapshotInput) -> Result<Snapshot, C
     Snapshot::validated(input.captured_at, entries).map_err(|message| CommandError {
         code: "invalid_snapshot",
         message,
+    })
+}
+
+pub fn create_snapshot(
+    repository: &SqliteRepository,
+    input: CreateSnapshotInput,
+) -> Result<(), CommandError> {
+    let snapshot = validate_snapshot_input(input)?;
+    repository.save_snapshot(&snapshot).map_err(|_| CommandError {
+        code: "storage_error",
+        message: "无法保存本地快照".into(),
     })
 }

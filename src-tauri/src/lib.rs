@@ -102,7 +102,10 @@ mod sqlite_repository_tests {
 
 #[cfg(test)]
 mod command_tests {
-    use super::commands::{validate_snapshot_input, CreateSnapshotInput, CurrencyQuantityInput};
+    use super::commands::{
+        create_snapshot, validate_snapshot_input, CreateSnapshotInput, CurrencyQuantityInput,
+    };
+    use super::storage::SqliteRepository;
 
     #[test]
     fn rejects_a_negative_quantity_at_the_command_boundary() {
@@ -115,6 +118,31 @@ mod command_tests {
         });
 
         assert_eq!(result.unwrap_err().code, "invalid_quantity");
+    }
+
+    #[test]
+    fn saves_a_validated_snapshot_through_the_command_service() {
+        let database_path = std::env::temp_dir().join(format!(
+            "poe2-income-command-{}.sqlite",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&database_path);
+        let repository = SqliteRepository::open(&database_path).unwrap();
+
+        create_snapshot(
+            &repository,
+            CreateSnapshotInput {
+                captured_at: "2026-09-03T09:00:00+08:00".into(),
+                entries: vec![CurrencyQuantityInput {
+                    currency_id: "exalted".into(),
+                    quantity: 10,
+                }],
+            },
+        )
+        .unwrap();
+
+        assert_eq!(repository.list_snapshots().unwrap().len(), 1);
+        std::fs::remove_file(database_path).unwrap();
     }
 }
 
